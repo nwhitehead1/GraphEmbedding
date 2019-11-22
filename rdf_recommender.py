@@ -6,6 +6,8 @@ from sklearn.model_selection import train_test_split
 from pykg2vec.utils.kgcontroller import KnowledgeGraph
 from pykg2vec.config.config import Importer, KGEArgParser
 from pykg2vec.utils.trainer import Trainer
+from pykg2vec.utils.bayesian_optimizer import BaysOptimizer
+from pykg2vec.config.hyperparams import KGETuneArgParser
 
 
 class KnowledgeDataLoader:
@@ -62,29 +64,35 @@ class KnowledgeDataLoader:
         self.write(self, triples=x_valid, write_path=Path('./'+self._name+'/'+self._name+'-valid.txt'))
 
 
-def main():
-
+def main(data_dir: str, bayes: bool):
+    # Parse command line args (only model_name, dataset_name, and dataset_path
     args = KGEArgParser().get_args(sys.argv[1:])
 
-    # Getting triples in the appropriate format for pykg2vec
+    # Getting triples in the appropriate format for pykg2vec (if not already loaded)
     if not Path(args.dataset_path).exists():
-        KnowledgeDataLoader(data_dir='./topical_concepts_en.ttl.bz2')
+        KnowledgeDataLoader(data_dir=data_dir)
 
-    kg = KnowledgeGraph(dataset=args.dataset_name, negative_sample=args.sampling, custom_dataset_path=args.dataset_path)
-    kg.prepare_data()
-    kg.dump()
-
-    # Configuration
     config_def, model_def = Importer().import_model_config(args.model_name.lower())
     config = config_def(args=args)
     model = model_def(config)
 
-    # Create, Compile and Train the model. While training, several evaluation will be performed.
-    trainer = Trainer(model=model, debug=args.debug)
-    trainer.build_model()
-    trainer.train_model()
+    if bayes:
+        tune_args = KGETuneArgParser().get_args(sys.argv[1:])
+        # Using Bayesian Optimization for hyperparameter tuning
+        bayes_opt = BaysOptimizer(args=tune_args)
+        bayes_opt.optimize()
+    else:
+        # Define knowledge graph
+        kg = KnowledgeGraph(dataset=args.dataset_name, negative_sample=args.sampling, custom_dataset_path=args.dataset_path)
+        kg.prepare_data()
+        kg.dump()
+
+        # Create, Compile and Train the model. While training, several evaluation will be performed.
+        trainer = Trainer(model=model, debug=args.debug)
+        trainer.build_model()
+        trainer.train_model()
 
 
-# python test.py -mn TransE -ds topical_concepts_en -dsp "./topical_concepts_en"
+# python rdf_recommender.py -mn <model_name> -ds topical_concepts_en -dsp "./topical_concepts_en" -db <bool>
 if __name__ == "__main__":
-    main()
+    main(data_dir='./topical_concepts_en.ttl.bz2', bayes=True)
