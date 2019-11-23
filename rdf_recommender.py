@@ -4,10 +4,12 @@ import numpy as np
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 from pykg2vec.utils.kgcontroller import KnowledgeGraph
-from pykg2vec.config.config import Importer, KGEArgParser
+from pykg2vec.config.config import Importer, KGEArgParser, TransEConfig
+from pykg2vec.core.TransE import TransE
 from pykg2vec.utils.trainer import Trainer
 from pykg2vec.utils.bayesian_optimizer import BaysOptimizer
 from pykg2vec.config.hyperparams import KGETuneArgParser
+import tensorflow as tf
 
 
 class KnowledgeDataLoader:
@@ -24,6 +26,10 @@ class KnowledgeDataLoader:
     @property
     def data_dir(self):
         return self._data_dir
+
+    @property
+    def triples(self):
+        return self._triples
 
     @property
     def name(self):
@@ -51,7 +57,6 @@ class KnowledgeDataLoader:
                     if decoded_line[0] == '#':
                         continue
                     triples.append((decoded_line[0], decoded_line[1], decoded_line[2]))
-            print('Successfully loaded {} triples from {}'.format(len(triples), self._name))
             self._triples.extend(triples)
         else:
             raise Exception('File extension is not supported.')
@@ -64,35 +69,34 @@ class KnowledgeDataLoader:
         self.write(self, triples=x_valid, write_path=Path('./'+self._name+'/'+self._name+'-valid.txt'))
 
 
-def main(data_dir: str, bayes: bool):
-    # Parse command line args (only model_name, dataset_name, and dataset_path
+def main(data_dir: str):
+
     args = KGEArgParser().get_args(sys.argv[1:])
 
     # Getting triples in the appropriate format for pykg2vec (if not already loaded)
-    if not Path(args.dataset_path).exists():
-        KnowledgeDataLoader(data_dir=data_dir)
+    if Path(args.dataset_path).exists():
+        print('Data from {} is already loaded.'.format(args.dataset_path))
+    else:
+        print('Data from {} does not exist... Loading it now'.format(args.dataset_path))
+        kgl = KnowledgeDataLoader(data_dir=data_dir)
+        print('Successfully loaded {} triples from {}.'.format(len(kgl.triples), kgl.data_dir))
+
+    # Define knowledge graph
+    kg = KnowledgeGraph(dataset=args.dataset_name, negative_sample=args.sampling, custom_dataset_path=args.dataset_path)
+    kg.prepare_data()
+    kg.dump()
 
     config_def, model_def = Importer().import_model_config(args.model_name.lower())
     config = config_def(args=args)
     model = model_def(config)
 
-    if bayes:
-        tune_args = KGETuneArgParser().get_args(sys.argv[1:])
-        # Using Bayesian Optimization for hyperparameter tuning
-        bayes_opt = BaysOptimizer(args=tune_args)
-        bayes_opt.optimize()
-    else:
-        # Define knowledge graph
-        kg = KnowledgeGraph(dataset=args.dataset_name, negative_sample=args.sampling, custom_dataset_path=args.dataset_path)
-        kg.prepare_data()
-        kg.dump()
-
-        # Create, Compile and Train the model. While training, several evaluation will be performed.
-        trainer = Trainer(model=model, debug=args.debug)
-        trainer.build_model()
-        trainer.train_model()
+    # Create, Compile and Train the model. While training, several evaluation will be performed.
+    trainer = Trainer(model=model, debug=args.debug)
+    trainer.build_model()
+    trainer.train_model()
 
 
 # python rdf_recommender.py -mn <model_name> -ds topical_concepts_en -dsp "./topical_concepts_en" -db <bool>
 if __name__ == "__main__":
-    main(data_dir='./topical_concepts_en.ttl.bz2', bayes=True)
+    main(data_dir='./topical_concepts_en.ttl.bz2')
+
