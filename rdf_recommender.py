@@ -1,15 +1,15 @@
 import sys
 import bz2
 import numpy as np
+import tensorflow as tf
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 from pykg2vec.utils.kgcontroller import KnowledgeGraph
-from pykg2vec.config.config import Importer, KGEArgParser, TransEConfig
+from pykg2vec.config.config import KGEArgParser
+from model_config import transe_config, ntn_config
 from pykg2vec.core.TransE import TransE
+from pykg2vec.core.NTN import NTN
 from pykg2vec.utils.trainer import Trainer
-from pykg2vec.utils.bayesian_optimizer import BaysOptimizer
-from pykg2vec.config.hyperparams import KGETuneArgParser
-import tensorflow as tf
 
 
 class KnowledgeDataLoader:
@@ -64,39 +64,44 @@ class KnowledgeDataLoader:
     def split(self):
         x_train, x_test = train_test_split(self._triples, test_size=self._test_size)
         x_test, x_valid = train_test_split(x_test, test_size=0.5)
-        self.write(self, triples=x_test, write_path=Path('./'+self._name+'/'+self._name+'-test.txt'))
-        self.write(self, triples=x_train, write_path=Path('./'+self._name+'/'+self._name+'-train.txt'))
-        self.write(self, triples=x_valid, write_path=Path('./'+self._name+'/'+self._name+'-valid.txt'))
+        self.write(self, triples=x_test, write_path=Path('./data/'+self._name+'/'+self._name+'-test.txt'))
+        self.write(self, triples=x_train, write_path=Path('./data/'+self._name+'/'+self._name+'-train.txt'))
+        self.write(self, triples=x_valid, write_path=Path('./data/'+self._name+'/'+self._name+'-valid.txt'))
 
 
-def main(data_dir: str):
+def main():
 
     args = KGEArgParser().get_args(sys.argv[1:])
 
-    # Getting triples in the appropriate format for pykg2vec (if not already loaded)
-    if Path(args.dataset_path).exists():
-        print('Data from {} is already loaded.'.format(args.dataset_path))
+    if args.dataset_path is None:
+        kg = KnowledgeGraph()
+        kg.prepare_data()
+        kg.dump()
     else:
-        print('Data from {} does not exist... Loading it now'.format(args.dataset_path))
-        kgl = KnowledgeDataLoader(data_dir=data_dir)
+        kgl = KnowledgeDataLoader(data_dir=args.dataset_path)
         print('Successfully loaded {} triples from {}.'.format(len(kgl.triples), kgl.data_dir))
 
-    # Define knowledge graph
-    kg = KnowledgeGraph(dataset=args.dataset_name, negative_sample=args.sampling, custom_dataset_path=args.dataset_path)
-    kg.prepare_data()
-    kg.dump()
+        args.dataset_path = './data/' + kgl.name
+        args.dataset_name = kgl.name
 
-    config_def, model_def = Importer().import_model_config(args.model_name.lower())
-    config = config_def(args=args)
-    model = model_def(config)
+        # Define knowledge graph
+        kg = KnowledgeGraph(dataset=args.dataset_name, negative_sample=args.sampling,
+                            custom_dataset_path=args.dataset_path)
+        kg.prepare_data()
+        kg.dump()
 
-    # Create, Compile and Train the model. While training, several evaluation will be performed.
-    trainer = Trainer(model=model, debug=args.debug)
-    trainer.build_model()
-    trainer.train_model()
+    models = [TransE(transe_config(args=args)), NTN(ntn_config(args=args))]
+
+    for model in models:
+        print('---- Training Model: {} ----'.format(model.model_name))
+        trainer = Trainer(model=model, debug=args.debug)
+        trainer.build_model()
+        trainer.train_model()
+        tf.reset_default_graph()
 
 
-# python rdf_recommender.py -mn <model_name> -ds topical_concepts_en -dsp "./topical_concepts_en" -db <bool>
+# Custom Dataset with no tuning   :     python rdf_recommender.py -dsp "./data/topical_concepts_en.ttl.bz2" -plote True
+# Freebase15k with Bayesian tuning:     python rdf_recommender.py -ghp True
 if __name__ == "__main__":
-    main(data_dir='./topical_concepts_en.ttl.bz2')
+    main()
 
